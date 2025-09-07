@@ -1,0 +1,53 @@
+graph TD
+    A[User opens Liora] --> B{First time user?}
+    B -->|Yes| C[Onboarding Screen]
+    B -->|No| D{Authenticated?}
+    
+    C --> E[Welcome & Features]
+    E --> F[Authentication Screen]
+    
+    D -->|Yes| G[Messages List]
+    D -->|No| F[Authentication Screen]
+    
+    F --> H{Auth Method}
+    H -->|Apple ID| I[Apple Sign In]
+    H -->|Google| J[Google Sign In]
+    H -->|Email| K[Email Sign In]
+    
+    I --> L[JWT Token]
+    J --> L[JWT Token]
+    K --> L[JWT Token]
+    
+    L --> G[Messages List]
+    
+    G --> M[Enhanced Messages Screen]
+    M --> N{User Action}
+    
+    N -->|Tap Chat| O[Enhanced Chat Screen]
+    N -->|Search| P[Search Users]
+    N -->|New Chat| Q[New Chat Sheet]
+    N -->|Swipe| R[Chat Actions]
+    
+    O --> S[Real-time Messaging]
+    S --> T[WebSocket Connection]
+    T --> U[Message Status Updates]
+    
+    O --> V{Message Type}
+    V -->|Text| W[Text Message]
+    V -->|Media| X[Media Picker]
+    V -->|Voice| Y[Voice Recorder]
+    
+    X --> Z[Upload to Cloudinary]
+    Z --> AA[Send Media Message]
+    
+    W --> BB[Send Text Message]
+    AA --> BB
+    Y --> BB
+    
+    BB --> CC[Update UI]
+    CC --> DD[Push Notification]
+    
+    style A fill:#007AFF,stroke:#fff,color:#fff
+    style G fill:#34C759,stroke:#fff,color:#fff
+    style O fill:#FF9500,stroke:#fff,color:#fff
+    style T fill:#AF52DE,stroke:#fff,color:#fff

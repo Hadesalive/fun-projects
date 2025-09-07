@@ -1,53 +1,73 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../core/constants/app_colors.dart';
 
 class DiscoverScreen extends StatelessWidget {
   const DiscoverScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final media = MediaQuery.of(context);
     final top = media.padding.top;
     final bottom = media.padding.bottom;
     final width = media.size.width;
     // Adaptive grid: 2 on phones, 3 on large phones/compact tablets, 4 on wider
     final crossAxisCount = width >= 1000 ? 4 : width >= 700 ? 3 : 2;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(height: top + 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Discover', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
-                      Text('24 profiles nearby', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13)),
-                    ],
-                  ),
-                  _RoundButton(icon: Icons.tune),
-                ],
+    
+    return Scaffold(
+      backgroundColor: isDark ? AppColors.darkBackground : AppColors.lightBackground,
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(height: top + 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Discover',
+                          style: GoogleFonts.inter(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
+                          ),
+                        ),
+                        Text(
+                          '24 profiles nearby',
+                          style: GoogleFonts.inter(
+                            color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    _RoundButton(icon: CupertinoIcons.slider_horizontal_3),
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: const [
-                  _FilterPill(label: '18–26'),
-                  _FilterPill(label: 'Nearby'),
-                  _FilterPill(label: 'No smokers'),
-                ],
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _FilterPill(label: '18–26', isDark: isDark),
+                    _FilterPill(label: 'Nearby', isDark: isDark),
+                    _FilterPill(label: 'No smokers', isDark: isDark),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 10),
             Expanded(
               child: GridView.count(
@@ -102,6 +122,7 @@ class DiscoverScreen extends StatelessWidget {
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -111,14 +132,19 @@ class _RoundButton extends StatelessWidget {
   const _RoundButton({required this.icon});
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
+        color: isDark ? Colors.white.withOpacity(0.1) : AppColors.darkBackground.withOpacity(0.1),
         borderRadius: BorderRadius.circular(50),
       ),
       child: IconButton(
         onPressed: () {},
-        icon: Icon(icon, color: Colors.white.withOpacity(0.85), size: 20),
+        icon: Icon(
+          icon, 
+          color: isDark ? Colors.white.withOpacity(0.85) : AppColors.darkBackground.withOpacity(0.85), 
+          size: 20,
+        ),
       ),
     );
   }
@@ -126,27 +152,41 @@ class _RoundButton extends StatelessWidget {
 
 class _FilterPill extends StatelessWidget {
   final String label;
-  const _FilterPill({required this.label});
+  final bool isDark;
+  const _FilterPill({required this.label, required this.isDark});
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
+        color: isDark ? Colors.white.withOpacity(0.15) : AppColors.darkBackground.withOpacity(0.15),
         borderRadius: BorderRadius.circular(50),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
+        border: Border.all(
+          color: isDark ? Colors.white.withOpacity(0.2) : AppColors.darkBackground.withOpacity(0.2),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          Text(
+            label, 
+            style: GoogleFonts.inter(
+              fontSize: 13, 
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white : AppColors.darkBackground,
+            ),
+          ),
           const SizedBox(width: 6),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: isDark ? Colors.white.withOpacity(0.2) : AppColors.darkBackground.withOpacity(0.2),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.close, size: 14),
+            child: Icon(
+              CupertinoIcons.xmark,
+              size: 14,
+              color: isDark ? Colors.white : AppColors.darkBackground,
+            ),
           )
         ],
       ),
@@ -160,6 +200,7 @@ class _GridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: Stack(
@@ -185,10 +226,17 @@ class _GridCard extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(50)),
-                child: Row(children: const [
-                  Icon(Icons.circle, size: 8, color: Color(0xFF22C55E)),
-                  SizedBox(width: 6),
-                  Text('online', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                child: Row(children: [
+                  Icon(CupertinoIcons.circle_fill, size: 8, color: const Color(0xFF22C55E)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'online', 
+                    style: GoogleFonts.inter(
+                      fontSize: 11, 
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
                 ]),
               ),
             ),
@@ -199,7 +247,14 @@ class _GridCard extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 decoration: BoxDecoration(color: const Color(0xFFEC4899), borderRadius: BorderRadius.circular(50)),
-                child: const Text('NEW', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                child: Text(
+                  'NEW', 
+                  style: GoogleFonts.inter(
+                    fontSize: 11, 
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
           Positioned(
@@ -208,7 +263,14 @@ class _GridCard extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(50)),
-              child: Text(distance, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+              child: Text(
+                distance, 
+                style: GoogleFonts.inter(
+                  fontSize: 11, 
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ),
           Positioned(
@@ -225,16 +287,29 @@ class _GridCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                        Text(
+                          name, 
+                          style: GoogleFonts.inter(
+                            fontSize: 17, 
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
                         const SizedBox(width: 6),
-                        Text(age, style: TextStyle(fontSize: 15, color: Colors.white.withOpacity(0.8))),
+                        Text(
+                          age, 
+                          style: GoogleFonts.inter(
+                            fontSize: 15, 
+                            color: Colors.white.withOpacity(0.8),
+                          ),
+                        ),
                       ]),
                     ],
                   ),
                   Container(
                     decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(50), border: Border.all(color: Colors.white.withOpacity(0.1))),
                     padding: const EdgeInsets.all(8),
-                    child: const Icon(Icons.favorite_border, size: 16),
+                    child: const Icon(CupertinoIcons.heart, size: 16, color: Colors.white),
                   )
                 ],
               ),

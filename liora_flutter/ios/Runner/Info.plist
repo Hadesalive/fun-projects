@@ -45,5 +45,30 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	
+	<!-- Privacy Permissions for Media Access -->
+	<key>NSCameraUsageDescription</key>
+	<string>Liora needs access to your camera to take photos and record videos for sharing in conversations.</string>
+	
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Liora needs access to your microphone to record voice messages and videos for sharing in conversations.</string>
+	
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Liora needs access to your photo library to share photos and videos in conversations.</string>
+	
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Liora needs permission to save photos and videos to your photo library.</string>
+	
+	<!-- Audio Session Configuration -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	
+	<!-- File Sharing Support -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 </dict>
 </plist>
