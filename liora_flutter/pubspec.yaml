@@ -45,10 +45,11 @@ dependencies:
   # HTTP & WebSocket
   dio: ^5.4.3+1
   web_socket_channel: ^2.4.0
+  socket_io_client: ^2.0.3+1
   
-  # Authentication (using alternative for now)
-  # clerk_flutter: ^0.0.18  # Not available yet
-  # firebase_auth: ^4.20.0  # Commented out for now
+  # Authentication
+  firebase_core: 2.24.2
+  firebase_auth: 4.15.3
   
   # Local Storage & Database
   shared_preferences: ^2.2.3
@@ -60,7 +61,7 @@ dependencies:
   video_player: ^2.8.6
   file_picker: ^8.0.6
   permission_handler: ^11.3.1
-  record: ^6.1.1
+  record: ^6.0.0
   audioplayers: ^6.0.0
   
   # Utilities

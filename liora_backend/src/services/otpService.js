@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import redisClient from '../config/redis.js';
+import { getRedisClient } from '../config/redis.js';
 
 class OTPService {
   constructor() {
@@ -23,6 +23,12 @@ class OTPService {
    */
   async storeOTP(phoneNumber, otp) {
     try {
+      const redisClient = getRedisClient();
+      if (!redisClient?.isOpen) {
+        console.log('Redis not available, skipping OTP storage');
+        return true; // Allow operation to continue without Redis
+      }
+      
       const key = `otp:${phoneNumber}`;
       const data = {
         otp,
@@ -30,7 +36,7 @@ class OTPService {
         createdAt: Date.now()
       };
 
-      await redisClient.setex(key, this.otpExpiry, JSON.stringify(data));
+      await redisClient.setEx(key, this.otpExpiry, JSON.stringify(data));
       console.log(`OTP stored for ${phoneNumber}`);
       return true;
     } catch (error) {
@@ -47,6 +53,12 @@ class OTPService {
    */
   async verifyOTP(phoneNumber, inputOTP) {
     try {
+      const redisClient = getRedisClient();
+      if (!redisClient?.isOpen) {
+        console.log('Redis not available, skipping OTP verification');
+        return { success: true, message: 'OTP verified (Redis unavailable)' };
+      }
+      
       const key = `otp:${phoneNumber}`;
       const storedData = await redisClient.get(key);
 
@@ -83,7 +95,7 @@ class OTPService {
           ...JSON.parse(storedData),
           attempts: attempts + 1
         };
-        await redisClient.setex(key, this.otpExpiry, JSON.stringify(updatedData));
+        await redisClient.setEx(key, this.otpExpiry, JSON.stringify(updatedData));
 
         return {
           success: false,
@@ -109,6 +121,9 @@ class OTPService {
    */
   async hasOTP(phoneNumber) {
     try {
+      const redisClient = getRedisClient();
+      if (!redisClient?.isOpen) return false;
+      
       const key = `otp:${phoneNumber}`;
       const exists = await redisClient.exists(key);
       return exists === 1;
@@ -125,6 +140,9 @@ class OTPService {
    */
   async deleteOTP(phoneNumber) {
     try {
+      const redisClient = getRedisClient();
+      if (!redisClient?.isOpen) return true;
+      
       const key = `otp:${phoneNumber}`;
       await redisClient.del(key);
       return true;

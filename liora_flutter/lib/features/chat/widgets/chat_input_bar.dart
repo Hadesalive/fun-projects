@@ -12,12 +12,14 @@ class ChatInputBar extends ConsumerStatefulWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSend;
+  final ValueChanged<String>? onChanged;
 
   const ChatInputBar({
     super.key,
     required this.controller,
     required this.focusNode,
     required this.onSend,
+    this.onChanged,
   });
 
   @override
@@ -187,6 +189,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar>
                                   horizontal: 12,
                                   vertical: 10,
                                 ),
+                                onChanged: widget.onChanged,
                               ),
                             ),
                           ),

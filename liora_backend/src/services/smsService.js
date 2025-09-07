@@ -1,45 +1,26 @@
-import twilio from 'twilio';
-import dotenv from 'dotenv';
-
-dotenv.config();
+// Mock SMS service for Firebase phone authentication
+// Since Firebase handles SMS sending, we just need phone validation
 
 class SMSService {
   constructor() {
-    this.client = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
-    this.fromNumber = process.env.TWILIO_PHONE_NUMBER;
+    console.log('📱 SMS Service initialized (Firebase mode - no Twilio needed)');
   }
 
   /**
-   * Send OTP SMS to phone number
+   * Mock send OTP - Firebase handles this
    * @param {string} phoneNumber - Phone number in E.164 format (+1234567890)
    * @param {string} otp - 6-digit OTP code
-   * @returns {Promise<Object>} - Twilio message result
+   * @returns {Promise<Object>} - Mock success result
    */
   async sendOTP(phoneNumber, otp) {
-    try {
-      const message = await this.client.messages.create({
-        body: `Your Liora verification code is: ${otp}. This code will expire in 5 minutes.`,
-        from: this.fromNumber,
-        to: phoneNumber
-      });
-
-      console.log(`SMS sent successfully to ${phoneNumber}. SID: ${message.sid}`);
-      return {
-        success: true,
-        messageSid: message.sid,
-        status: message.status
-      };
-    } catch (error) {
-      console.error('Error sending SMS:', error);
-      return {
-        success: false,
-        error: error.message,
-        code: error.code
-      };
-    }
+    console.log(`📱 Mock SMS: OTP ${otp} would be sent to ${phoneNumber} (Firebase handles actual sending)`);
+    
+    return {
+      success: true,
+      messageSid: `mock_${Date.now()}`,
+      status: 'sent',
+      provider: 'firebase'
+    };
   }
 
   /**
@@ -60,20 +41,29 @@ class SMSService {
    * @returns {string} - Formatted phone number
    */
   formatPhoneNumber(phoneNumber, countryCode = 'US') {
+    // If already in E.164 format (starts with +), return as-is
+    if (phoneNumber.startsWith('+')) {
+      return phoneNumber;
+    }
+    
     // Remove all non-digit characters
     const cleaned = phoneNumber.replace(/\D/g, '');
     
-    // Add country code if not present
-    if (!cleaned.startsWith('1') && countryCode === 'US') {
+    // Add country code if not present and looks like a US number
+    if (!cleaned.startsWith('1') && countryCode === 'US' && cleaned.length === 10) {
       return `+1${cleaned}`;
     }
     
     // Add + if not present
-    if (!phoneNumber.startsWith('+')) {
-      return `+${cleaned}`;
-    }
-    
-    return phoneNumber;
+    return `+${cleaned}`;
+  }
+
+  /**
+   * Check if SMS service is available
+   * @returns {boolean} - Always true for Firebase mode
+   */
+  isAvailable() {
+    return true;
   }
 }
 

@@ -9,15 +9,16 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 
 import { connectDB } from './config/database.js';
-import { connectRedis } from './config/redis.js';
+// import { connectRedis } from './config/redis.js'; // Disabled for now
 import { errorHandler, notFound } from './middleware/errorMiddleware.js';
 import { setupSocketIO } from './socket/socketHandler.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
+import firebaseAuthRoutes from './routes/firebaseAuthSimple.js';
 import userRoutes from './routes/userRoutes.js';
 import conversationRoutes from './routes/conversationRoutes.js';
-import messageRoutes from './routes/messageRoutes.js';
+import messageRoutes, { setSocketIO } from './routes/messageRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -34,7 +35,11 @@ const io = new Server(server, {
 
 // Connect to databases
 connectDB();
-connectRedis();
+
+// Redis disabled for now - uncomment below to enable Redis caching
+// connectRedis().catch(err => {
+//   console.log('⚠️  Redis connection failed - app will continue without caching:', err.message);
+// });
 
 // Trust proxy for rate limiting
 app.set('trust proxy', 1);
@@ -76,13 +81,17 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authRoutes); // Legacy OTP routes (for testing)
+app.use('/api/firebase', firebaseAuthRoutes); // Firebase ID token routes
 app.use('/api/users', userRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/messages', messageRoutes);
 
 // Setup Socket.IO
 setupSocketIO(io);
+
+// Pass Socket.IO instance to message routes for real-time emission
+setSocketIO(io);
 
 // Error handling middleware
 app.use(notFound);

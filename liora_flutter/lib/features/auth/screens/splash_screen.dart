@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/firebase_auth_service.dart';
 import 'onboarding_screen.dart';
 import '../../../screens/messages_screen.dart';
 import 'package:go_router/go_router.dart';
@@ -35,25 +37,55 @@ class _SplashScreenState extends State<SplashScreen> {
       ),
     );
 
+    // Initialize services
+    final apiService = ApiService();
+    apiService.initialize();
+
     // Simulate app initialization
     await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
 
-    // Check if user has completed onboarding
+    // Check authentication status
     final prefs = await SharedPreferences.getInstance();
     final hasCompletedOnboarding = prefs.getBool(AppConstants.onboardingKey) ?? false;
-    final hasUserToken = prefs.getString(AppConstants.userTokenKey);
+    final backendToken = prefs.getString('backend_token');
+    
+    print('🔍 Auth Check: Backend token exists: ${backendToken != null}');
+    print('🔍 Auth Check: Onboarding completed: $hasCompletedOnboarding');
 
-    // Navigate based on app state
-    if (hasUserToken != null && hasUserToken.isNotEmpty) {
-      // User is authenticated, go to messages
-      _navigateToMessages();
-    } else if (hasCompletedOnboarding) {
+    // Navigate based on authentication state
+    if (backendToken != null && backendToken.isNotEmpty) {
+      // User has backend token, verify it's still valid
+      print('🔑 Found backend token, verifying with server...');
+      
+      try {
+        final userResult = await apiService.getCurrentUser();
+        
+        if (userResult.success) {
+          print('✅ User authenticated, going to messages');
+          _navigateToMessages();
+          return;
+        } else {
+          print('❌ Backend token invalid, clearing and going to auth');
+          // Clear invalid token
+          await prefs.remove('backend_token');
+        }
+      } catch (e) {
+        print('❌ Error verifying token: $e');
+        // Clear potentially corrupted token
+        await prefs.remove('backend_token');
+      }
+    }
+
+    // User not authenticated or token invalid
+    if (hasCompletedOnboarding) {
       // User has seen onboarding but not authenticated, go to auth
+      print('📱 Going to auth screen');
       _navigateToAuth();
     } else {
       // First time user, show onboarding
+      print('👋 First time user, showing onboarding');
       _navigateToOnboarding();
     }
   }

@@ -5,10 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/app_colors.dart';
-import '../screens/enhanced_chat_screen.dart';
+import '../../../core/models/message.dart';
 
 class MessageBubble extends StatelessWidget {
-  final MockMessage message;
+  final Message message;
   final bool showAvatar;
   final String? avatarUrl;
 
@@ -70,7 +70,7 @@ class MessageBubble extends StatelessWidget {
                   children: [
                     // Message text
                     Text(
-                      message.text,
+                      message.content.text ?? '',
                       style: GoogleFonts.inter(
                         fontSize: 16,
                         color: _getTextColor(isDark),
@@ -85,7 +85,7 @@ class MessageBubble extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          DateFormat('HH:mm').format(message.timestamp),
+                          DateFormat('HH:mm').format(message.createdAt),
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             color: _getTimestampColor(isDark),
@@ -220,7 +220,7 @@ class _MessageStatusIcon extends StatelessWidget {
 }
 
 class _MessageOptionsSheet extends StatelessWidget {
-  final MockMessage message;
+  final Message message;
 
   const _MessageOptionsSheet({required this.message});
 
@@ -256,7 +256,7 @@ class _MessageOptionsSheet extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              message.text,
+              message.content.text ?? '',
               style: GoogleFonts.inter(
                 fontSize: 14,
                 color: isDark ? AppColors.darkSecondaryText : AppColors.lightSecondaryText,

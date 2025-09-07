@@ -70,5 +70,27 @@
 	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	
+	<!-- Firebase Phone Authentication URL Schemes -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>REVERSED_CLIENT_ID</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.974985211075-2afc08615396933463c676</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>BUNDLE_ID</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.example.lioraFlutter</string>
+				<string>app-1-974985211075-ios-2afc08615396933463c676</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

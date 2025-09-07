@@ -7,6 +7,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/navigation/app_router.dart';
+import '../../../core/services/firebase_auth_service.dart';
 
 class PhoneInputScreen extends StatefulWidget {
   const PhoneInputScreen({super.key});
@@ -34,14 +35,43 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
     setState(() => _isLoading = true);
     HapticFeedback.lightImpact();
     
-    // Simulate API call delay
-    await Future.delayed(const Duration(seconds: 2));
-    
-    if (mounted) {
-      setState(() => _isLoading = false);
-      // Navigate to OTP verification screen
-      context.go('${AppRouter.otpVerification}?phone=${Uri.encodeComponent(_countryCode + _phoneNumber)}');
+    try {
+      final authService = FirebaseAuthService();
+      final result = await authService.sendOTP(_countryCode + _phoneNumber);
+      
+      if (mounted) {
+        setState(() => _isLoading = false);
+        
+        if (result.success) {
+          // Navigate to OTP verification screen
+          context.go('${AppRouter.otpVerification}?phone=${Uri.encodeComponent(_countryCode + _phoneNumber)}');
+        } else {
+          // Show error dialog
+          _showErrorDialog(result.error ?? 'Failed to send OTP');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorDialog('An unexpected error occurred');
+      }
     }
+  }
+
+  void _showErrorDialog(String message) {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('Error'),
+        content: Text(message),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('OK'),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

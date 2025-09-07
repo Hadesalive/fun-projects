@@ -10,6 +10,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/navigation/app_router.dart';
 import '../../../core/services/media_service.dart';
+import '../../../core/services/firebase_auth_service.dart';
+import '../../../core/services/api_service.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({super.key});
@@ -20,15 +22,26 @@ class ProfileSetupScreen extends StatefulWidget {
 
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final MediaService _mediaService = MediaService();
+  final ApiService _apiService = ApiService();
   bool _isLoading = false;
+  bool _isUploadingImage = false;
   String? _selectedAvatar;
   String? _selectedImagePath;
+  String? _uploadedImageUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiService.initialize();
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _usernameController.dispose();
     super.dispose();
   }
 
@@ -239,13 +252,53 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     setState(() => _isLoading = true);
     HapticFeedback.lightImpact();
     
-    // Simulate API call delay
-    await Future.delayed(const Duration(seconds: 2));
-    
-    if (mounted) {
-      setState(() => _isLoading = false);
-      // Navigate to messages screen
-      context.go(AppRouter.messages);
+    try {
+      // Step 1: Upload image if selected (for now, we'll use a placeholder URL)
+      String? avatarUrl;
+      if (_selectedImagePath != null) {
+        setState(() => _isUploadingImage = true);
+        
+        // TODO: Implement actual image upload to your backend or cloud storage
+        // For now, we'll use a placeholder URL based on the user's name
+        final firstName = _nameController.text.trim().split(' ').first.toLowerCase();
+        avatarUrl = 'https://ui-avatars.com/api/?name=${Uri.encodeComponent(_nameController.text.trim())}&size=200&background=6366f1&color=ffffff';
+        
+        setState(() => _isUploadingImage = false);
+      }
+      
+      // Step 2: Update profile on backend
+      final result = await _apiService.updateProfileAuth(
+        displayName: _nameController.text.trim(),
+        username: _usernameController.text.trim().isNotEmpty 
+            ? _usernameController.text.trim() 
+            : null,
+        avatarUrl: avatarUrl,
+      );
+      
+      if (mounted) {
+        setState(() => _isLoading = false);
+        
+        if (result.success) {
+          // Show success message
+          _showSuccessDialog('Profile setup complete! Welcome to Liora.');
+          
+          // Navigate to messages screen after a short delay
+          await Future.delayed(const Duration(seconds: 1));
+          if (mounted) {
+            context.go(AppRouter.messages);
+          }
+        } else {
+          _showErrorDialog(result.error ?? 'Failed to update profile');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isUploadingImage = false;
+        });
+        _showErrorDialog('An unexpected error occurred: ${e.toString()}');
+      }
     }
   }
 
@@ -371,59 +424,121 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               
               const SizedBox(height: 60),
               
-              // Name input form
+              // Name and username input form
               Form(
                 key: _formKey,
-                child: TextFormField(
-                  controller: _nameController,
-                  decoration: InputDecoration(
-                    labelText: 'Full Name',
-                    labelStyle: GoogleFonts.inter(
-                      color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
-                    ),
-                    hintText: 'Enter your full name',
-                    hintStyle: GoogleFonts.inter(
-                      color: isDark ? Colors.white54 : AppColors.darkBackground.withOpacity(0.5),
-                    ),
-                    prefixIcon: Icon(
-                      LucideIcons.user,
-                      color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                child: Column(
+                  children: [
+                    // Full Name Field
+                    TextFormField(
+                      controller: _nameController,
+                      decoration: InputDecoration(
+                        labelText: 'Full Name',
+                        labelStyle: GoogleFonts.inter(
+                          color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
+                        ),
+                        hintText: 'Enter your full name',
+                        hintStyle: GoogleFonts.inter(
+                          color: isDark ? Colors.white54 : AppColors.darkBackground.withOpacity(0.5),
+                        ),
+                        prefixIcon: Icon(
+                          LucideIcons.user,
+                          color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: AppColors.primary,
+                            width: 2,
+                          ),
+                        ),
+                        filled: true,
+                        fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.withOpacity(0.05),
                       ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        color: isDark ? Colors.white : AppColors.darkBackground,
                       ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your name';
+                        }
+                        if (value.trim().length < 2) {
+                          return 'Name must be at least 2 characters';
+                        }
+                        return null;
+                      },
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Username Field (Optional)
+                    TextFormField(
+                      controller: _usernameController,
+                      decoration: InputDecoration(
+                        labelText: 'Username (Optional)',
+                        labelStyle: GoogleFonts.inter(
+                          color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
+                        ),
+                        hintText: 'Choose a unique username',
+                        hintStyle: GoogleFonts.inter(
+                          color: isDark ? Colors.white54 : AppColors.darkBackground.withOpacity(0.5),
+                        ),
+                        prefixIcon: Icon(
+                          LucideIcons.atSign,
+                          color: isDark ? Colors.white70 : AppColors.darkBackground.withOpacity(0.7),
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: isDark ? Colors.white24 : AppColors.darkBackground.withOpacity(0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: AppColors.primary,
+                            width: 2,
+                          ),
+                        ),
+                        filled: true,
+                        fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.withOpacity(0.05),
                       ),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        color: isDark ? Colors.white : AppColors.darkBackground,
+                      ),
+                      validator: (value) {
+                        if (value != null && value.trim().isNotEmpty) {
+                          if (value.trim().length < 3) {
+                            return 'Username must be at least 3 characters';
+                          }
+                          if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value.trim())) {
+                            return 'Username can only contain letters, numbers, and underscores';
+                          }
+                        }
+                        return null;
+                      },
                     ),
-                    filled: true,
-                    fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.withOpacity(0.05),
-                  ),
-                  style: GoogleFonts.inter(
-                    fontSize: 16,
-                    color: isDark ? Colors.white : AppColors.darkBackground,
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your name';
-                    }
-                    if (value.trim().length < 2) {
-                      return 'Name must be at least 2 characters';
-                    }
-                    return null;
-                  },
+                  ],
                 ),
               ).animate().fadeIn(duration: 1400.ms).slideY(begin: 0.2),
               
@@ -444,13 +559,26 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                     ),
                   ),
                   child: _isLoading
-                      ? SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              _isUploadingImage ? 'Processing image...' : 'Setting up profile...',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         )
                       : Row(
                           mainAxisAlignment: MainAxisAlignment.center,

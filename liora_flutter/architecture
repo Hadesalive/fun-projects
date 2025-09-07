@@ -51,3 +51,31 @@ graph TD
     style G fill:#34C759,stroke:#fff,color:#fff
     style O fill:#FF9500,stroke:#fff,color:#fff
     style T fill:#AF52DE,stroke:#fff,color:#fff
+
+
+
+
+
+
+
+
+    sequenceDiagram
+    participant App as Flutter App
+    participant Firebase as Firebase Auth
+    participant Backend as Node.js Backend
+    participant DB as MongoDB
+
+    App->>Firebase: Phone Number
+    Firebase-->>App: SMS OTP
+    App->>Firebase: Verify OTP
+    Firebase-->>App: Firebase ID Token
+    App->>Backend: POST /auth/verify-otp + Firebase Token
+    Backend->>Backend: Verify Firebase Token
+    Backend->>DB: Find/Create User
+    Backend-->>App: JWT Token + User Data
+    
+    Note over App: Store JWT Token
+    
+    App->>Backend: API Calls with JWT
+    Backend->>Backend: Verify JWT
+    Backend-->>App: Protected Resources

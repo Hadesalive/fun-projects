@@ -12,6 +12,9 @@ import '../../features/profile/screens/profile_screen.dart';
 import '../../features/discover/screens/discover_screen.dart';
 import '../../features/media/screens/media_viewer_screen.dart';
 import '../../features/groups/screens/create_group_screen.dart';
+import '../../features/groups/screens/groups_screen.dart';
+import '../../features/groups/screens/group_chat_screen.dart';
+import '../../features/groups/screens/group_info_screen.dart';
 import '../../features/chat/screens/contact_info_screen.dart';
 
 class AppRouter {
@@ -27,6 +30,8 @@ class AppRouter {
   static const String discover = '/discover';
   static const String groups = '/groups';
   static const String createGroup = '/groups/create';
+  static const String groupChat = '/groups/chat';
+  static const String groupInfo = '/groups/info';
   static const String mediaViewer = '/media-viewer';
   static const String contactInfo = '/contact-info';
 
@@ -92,9 +97,11 @@ class AppRouter {
         builder: (context, state) {
           final peerName = state.extra as String? ?? 'Unknown';
           final peerAvatarUrl = state.uri.queryParameters['avatarUrl'] ?? '';
+          final conversationId = state.uri.queryParameters['conversationId'];
           return EnhancedChatScreen(
             peerName: peerName,
             peerAvatarUrl: peerAvatarUrl,
+            conversationId: conversationId,
           );
         },
       ),
@@ -112,20 +119,53 @@ class AppRouter {
         name: 'discover',
         builder: (context, state) => const DiscoverScreen(),
       ),
-      // Groups list (placeholder)
+      // Groups list
       GoRoute(
         path: groups,
         name: 'groups',
-        builder: (context, state) => Scaffold(
-          appBar: AppBar(title: const Text('Groups')),
-          body: const Center(child: Text('Groups coming soon')),
-        ),
+        builder: (context, state) => const GroupsScreen(),
       ),
       // Create Group
       GoRoute(
         path: createGroup,
         name: 'createGroup',
         builder: (context, state) => const CreateGroupScreen(),
+      ),
+      // Group Chat
+      GoRoute(
+        path: groupChat,
+        name: 'groupChat',
+        builder: (context, state) {
+          final groupId = state.uri.queryParameters['groupId'] ?? '';
+          final groupName = state.uri.queryParameters['groupName'] ?? 'Group';
+          final groupAvatarUrl = state.uri.queryParameters['avatarUrl'];
+          final memberCount = int.tryParse(state.uri.queryParameters['memberCount'] ?? '0') ?? 0;
+          return GroupChatScreen(
+            groupId: groupId,
+            groupName: groupName,
+            groupAvatarUrl: groupAvatarUrl,
+            memberCount: memberCount,
+          );
+        },
+      ),
+      // Group Info
+      GoRoute(
+        path: groupInfo,
+        name: 'groupInfo',
+        builder: (context, state) {
+          final groupId = state.uri.queryParameters['groupId'] ?? '';
+          final groupName = state.uri.queryParameters['groupName'] ?? 'Group';
+          final groupAvatarUrl = state.uri.queryParameters['avatarUrl'];
+          final groupDescription = state.uri.queryParameters['description'];
+          final memberCount = int.tryParse(state.uri.queryParameters['memberCount'] ?? '0') ?? 0;
+          return GroupInfoScreen(
+            groupId: groupId,
+            groupName: groupName,
+            groupAvatarUrl: groupAvatarUrl,
+            groupDescription: groupDescription,
+            memberCount: memberCount,
+          );
+        },
       ),
       
       // Contact Info

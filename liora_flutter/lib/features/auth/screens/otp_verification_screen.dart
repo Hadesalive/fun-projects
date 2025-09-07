@@ -9,6 +9,7 @@ import 'package:pin_code_fields/pin_code_fields.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/navigation/app_router.dart';
+import '../../../core/services/firebase_auth_service.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   final String phoneNumber;
@@ -51,9 +52,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     _resendTimer?.cancel();
     _resendTimer = null;
     
-    // Dispose controller safely
-    _otpController?.dispose();
-    _otpController = null;
+    // Dispose controller safely - check if it's not null and not already disposed
+    if (_otpController != null) {
+      _otpController!.dispose();
+      _otpController = null;
+    }
     
     super.dispose();
   }
@@ -89,13 +92,25 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     setState(() => _isLoading = true);
     HapticFeedback.lightImpact();
     
-    // Simulate API call delay
-    await Future.delayed(const Duration(seconds: 2));
-    
-    if (mounted) {
-      setState(() => _isLoading = false);
-      // Navigate to profile setup screen
-      context.go(AppRouter.profileSetup);
+    try {
+      final authService = FirebaseAuthService();
+      final result = await authService.verifyOTP(_otp);
+      
+      if (mounted) {
+        setState(() => _isLoading = false);
+        
+        if (result.success) {
+          // Navigate to profile setup screen
+          context.go(AppRouter.profileSetup);
+        } else {
+          _showErrorDialog(result.error ?? 'Verification failed');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorDialog('An unexpected error occurred');
+      }
     }
   }
 
@@ -105,13 +120,25 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     setState(() => _isResending = true);
     HapticFeedback.lightImpact();
     
-    // Simulate API call delay
-    await Future.delayed(const Duration(seconds: 1));
-    
-    if (mounted) {
-      setState(() => _isResending = false);
-      _startResendCountdown();
-      _showSuccessDialog('Code sent successfully');
+    try {
+      final authService = FirebaseAuthService();
+      final result = await authService.sendOTP(widget.phoneNumber);
+      
+      if (mounted) {
+        setState(() => _isResending = false);
+        
+        if (result.success) {
+          _startResendCountdown();
+          _showSuccessDialog('Code sent successfully');
+        } else {
+          _showErrorDialog(result.error ?? 'Failed to resend code');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isResending = false);
+        _showErrorDialog('An unexpected error occurred');
+      }
     }
   }
 

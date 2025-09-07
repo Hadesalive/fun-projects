@@ -1,134 +1,478 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../../core/navigation/app_router.dart';
+import '../../../core/models/message.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/socket_service.dart';
+import '../../../shared/widgets/cupertino_toast.dart';
 import '../widgets/message_bubble.dart';
-import '../widgets/typing_indicator.dart';
 import '../widgets/chat_input_bar.dart';
+import 'dart:async';
 
 class EnhancedChatScreen extends StatefulWidget {
   final String peerName;
   final String peerAvatarUrl;
+  final String? conversationId; // For real API calls
   
   const EnhancedChatScreen({
     super.key,
     required this.peerName,
     required this.peerAvatarUrl,
+    this.conversationId,
   });
 
   @override
   State<EnhancedChatScreen> createState() => _EnhancedChatScreenState();
 }
 
-class _EnhancedChatScreenState extends State<EnhancedChatScreen>
-    with TickerProviderStateMixin {
+class _EnhancedChatScreenState extends State<EnhancedChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
+  final ApiService _apiService = ApiService();
+  final SocketService _socketService = SocketService();
   
-  late AnimationController _typingAnimationController;
+  List<Message> _messages = [];
+  bool _isLoading = true;
+  bool _isSendingMessage = false;
+  String? _error;
+  String? _currentUserId;
   bool _isTyping = false;
-  bool _peerIsTyping = false;
-  bool _showScrollToBottom = false;
-  bool _isMuted = false;
-  bool _isBlocked = false;
+  String? _typingUserId;
   
-  final List<MockMessage> _messages = [
-    MockMessage(
-      id: '1',
-      text: 'Hey! How are you doing today?',
-      isMe: false,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 45)),
-      status: MessageStatus.read,
-    ),
-    MockMessage(
-      id: '2',
-      text: "I'm doing great! Just finished a really interesting project at work. How about you?",
-      isMe: true,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 43)),
-      status: MessageStatus.read,
-    ),
-    MockMessage(
-      id: '3',
-      text: 'That sounds amazing! What kind of project was it?',
-      isMe: false,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 40)),
-      status: MessageStatus.read,
-    ),
-    MockMessage(
-      id: '4',
-      text: 'It was a mobile app for a local business. Really enjoyed working on the UI design and animations.',
-      isMe: true,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 38)),
-      status: MessageStatus.read,
-    ),
-    MockMessage(
-      id: '5',
-      text: 'Would love to see it sometime! Are you free for coffee this weekend?',
-      isMe: false,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 35)),
-      status: MessageStatus.read,
-    ),
-    MockMessage(
-      id: '6',
-      text: 'Absolutely! Saturday afternoon works perfectly for me. How about that new place downtown?',
-      isMe: true,
-      timestamp: DateTime.now().subtract(const Duration(minutes: 33)),
-      status: MessageStatus.delivered,
-    ),
-  ];
+  // Stream subscriptions
+  StreamSubscription<Map<String, dynamic>>? _messageSubscription;
+  StreamSubscription<Map<String, dynamic>>? _typingSubscription;
+  StreamSubscription<Map<String, dynamic>>? _errorSubscription;
 
   @override
   void initState() {
     super.initState();
-    _typingAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
-      vsync: this,
-    )..repeat();
+    print('🔍 Chat Screen Debug:');
+    print('  - Peer Name: ${widget.peerName}');
+    print('  - Peer Avatar: ${widget.peerAvatarUrl}');
+    print('  - Conversation ID: ${widget.conversationId}');
     
-    _scrollController.addListener(_onScroll);
-    _messageController.addListener(_onTextChanged);
-    
-    // Simulate peer typing after 3 seconds
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() => _peerIsTyping = true);
-        Future.delayed(const Duration(seconds: 3), () {
-          if (mounted) {
-            setState(() => _peerIsTyping = false);
-          }
-        });
-      }
-    });
+    if (widget.conversationId != null) {
+      _loadMessages();
+      _loadCurrentUser();
+      _setupSocketConnection();
+      _syncUnreadCount(); // Sync unread count when chat opens
+    } else {
+      // For now, if no conversation ID, show placeholder
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Mark messages as read when user views the chat
+    if (widget.conversationId != null && _messages.isNotEmpty && _currentUserId != null) {
+      _markMessagesAsRead();
+    }
   }
 
   @override
   void dispose() {
-    _typingAnimationController.dispose();
     _scrollController.dispose();
     _messageController.dispose();
     _messageFocusNode.dispose();
+    
+    // Clean up socket connections
+    _messageSubscription?.cancel();
+    _typingSubscription?.cancel();
+    _errorSubscription?.cancel();
+    
+    // Leave conversation and disconnect if needed
+    if (widget.conversationId != null) {
+      _socketService.leaveConversation(widget.conversationId!);
+    }
+    
     super.dispose();
   }
 
-  void _onScroll() {
-    final showScrollToBottom = _scrollController.offset > 200;
-    if (_showScrollToBottom != showScrollToBottom) {
-      setState(() => _showScrollToBottom = showScrollToBottom);
+  Future<void> _setupSocketConnection() async {
+    // Connect to socket if not already connected
+    await _socketService.connect();
+    
+    // Join the conversation room
+    if (widget.conversationId != null) {
+      await _socketService.joinConversation(widget.conversationId!);
+    }
+    
+    // Set up message listeners
+    _messageSubscription = _socketService.messageStream.listen((event) {
+      _handleSocketMessage(event);
+    });
+    
+    // Set up typing listeners
+    _typingSubscription = _socketService.typingStream.listen((event) {
+      _handleTypingEvent(event);
+    });
+    
+    // Set up error listeners
+    _errorSubscription = _socketService.errorStream.listen((event) {
+      _handleSocketError(event);
+    });
+  }
+
+  void _handleSocketMessage(Map<String, dynamic> event) {
+    final type = event['type'] as String;
+    final data = event['data'] as Map<String, dynamic>;
+    // Debug: surface incoming events in chat view
+    // Helps verify the handler is firing for this screen
+    // and what payload we are receiving in realtime
+    // (kept concise to avoid spam)
+    print('🔔 Chat socket event: $type for conv ${data['conversationId'] ?? data['conversation']}');
+    
+    switch (type) {
+      case 'new':
+        _handleNewMessage(data);
+        break;
+      case 'edited':
+        _handleEditedMessage(data);
+        break;
+      case 'deleted':
+        _handleDeletedMessage(data);
+        break;
+      case 'read':
+        _handleReadMessage(data);
+        break;
+      case 'reaction':
+        _handleReactionMessage(data);
+        break;
     }
   }
 
-  void _onTextChanged() {
-    final hasText = _messageController.text.trim().isNotEmpty;
-    if (_isTyping != hasText) {
-      setState(() => _isTyping = hasText);
+  void _handleNewMessage(Map<String, dynamic> data) {
+    try {
+      // Normalize incoming payload
+      final normalized = Map<String, dynamic>.from(data);
+      // Some emits use 'conversation' instead of 'conversationId'
+      if (normalized['conversationId'] == null && normalized['conversation'] != null) {
+        normalized['conversationId'] = normalized['conversation'];
+      }
+      // Ensure content map has 'text' key for text messages
+      if (normalized['type'] == 'text') {
+        final content = normalized['content'];
+        if (content is String) {
+          normalized['content'] = { 'text': content };
+        }
+      }
+      // Ensure createdAt exists as ISO string
+      if (normalized['createdAt'] == null) {
+        normalized['createdAt'] = DateTime.now().toIso8601String();
+      }
+
+      // Drop messages not for the currently open conversation
+      if (widget.conversationId != null &&
+          normalized['conversationId'] != widget.conversationId) {
+        print('🚫 Ignored message for different conversation ${normalized['conversationId']}');
+        return;
+      }
+
+      print('✅ Processing realtime message for conv ${normalized['conversationId']}');
+
+      Message message;
+      try {
+        message = Message.fromJson(normalized);
+      } catch (_) {
+        // Fallback minimal mapping to avoid losing realtime update
+        final contentMap = (normalized['content'] as Map<String, dynamic>? ?? {});
+        final text = contentMap['text'] as String? ?? '';
+        message = Message(
+          id: (normalized['id'] as String?) ?? (normalized['_id'] as String? ?? ''),
+          conversationId: normalized['conversationId'] as String? ?? widget.conversationId ?? '',
+          sender: MessageSender(
+            id: (normalized['sender'] is Map)
+                ? (normalized['sender']['id'] as String? ?? normalized['sender']['_id'] as String? ?? '')
+                : (normalized['sender'] as String? ?? ''),
+            username: (normalized['sender'] is Map) ? (normalized['sender']['username'] as String? ?? '') : '',
+            displayName: (normalized['sender'] is Map) ? (normalized['sender']['displayName'] as String? ?? '') : '',
+          ),
+          type: MessageType.text,
+          content: MessageContent(text: text),
+          status: MessageStatus.sent,
+          createdAt: DateTime.tryParse(normalized['createdAt'] as String? ?? '') ?? DateTime.now(),
+          isMe: false,
+        );
+      }
+      
+      final beforeLen = _messages.length;
+      setState(() {
+        // Check if this is a message we sent (by clientId or sender)
+        final isFromCurrentUser = message.sender.id == _currentUserId;
+        
+        print('🔍 Real-time message debug:');
+        print('  - Message sender ID: ${message.sender.id}');
+        print('  - Current user ID: $_currentUserId');
+        print('  - Is from current user: $isFromCurrentUser');
+        print('  - Original isMe: ${message.isMe}');
+        
+        // Create a new message with correct isMe property
+        final correctedMessage = Message(
+          id: message.id,
+          conversationId: message.conversationId,
+          sender: message.sender,
+          type: message.type,
+          content: message.content,
+          replyToId: message.replyToId,
+          reactions: message.reactions,
+          status: message.status,
+          createdAt: message.createdAt,
+          editedAt: message.editedAt,
+          isMe: isFromCurrentUser, // Force correct isMe value
+          isDeleted: message.isDeleted,
+        );
+        
+        if (isFromCurrentUser) {
+          // Replace temp message with real message
+          final tempIndex = _messages.indexWhere((msg) => 
+            msg.id == normalized['clientId'] || 
+            (msg.sender.id == _currentUserId && msg.content.text == message.content.text)
+          );
+          
+          if (tempIndex != -1) {
+            _messages[tempIndex] = correctedMessage;
+          } else {
+            _messages.add(correctedMessage);
+          }
+        } else {
+          // Add new message from other user
+          _messages.add(correctedMessage);
+        }
+      });
+      final afterLen = _messages.length;
+      if (afterLen == beforeLen) {
+        // As a safety net, fetch latest from API if nothing was appended/reconciled
+        // This avoids cases where schema drift prevents realtime render
+        _loadMessages();
+      }
+      
+      _scrollToBottom();
+      
+      // Mark messages as read when new message is received
+      _markMessagesAsRead();
+    } catch (e) {
+      print('Error handling new message: $e');
+    }
+  }
+
+  void _handleEditedMessage(Map<String, dynamic> data) {
+    final messageId = data['messageId'] as String;
+    final content = data['content'] as Map<String, dynamic>;
+    
+    setState(() {
+      final index = _messages.indexWhere((msg) => msg.id == messageId);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(
+          content: MessageContent.fromJson(content, 'text'),
+          editedAt: DateTime.parse(data['editedAt']),
+        );
+      }
+    });
+  }
+
+  void _handleDeletedMessage(Map<String, dynamic> data) {
+    final messageId = data['messageId'] as String;
+    
+    setState(() {
+      _messages.removeWhere((msg) => msg.id == messageId);
+    });
+  }
+
+  void _handleReadMessage(Map<String, dynamic> data) {
+    final messageId = data['messageId'] as String;
+    final userId = data['userId'] as String;
+    
+    // Update read status for the message
+    setState(() {
+      final index = _messages.indexWhere((msg) => msg.id == messageId);
+      if (index != -1) {
+        // For now, just update the status to read
+        _messages[index] = _messages[index].copyWith(
+          status: MessageStatus.read,
+        );
+      }
+    });
+  }
+
+  void _handleReactionMessage(Map<String, dynamic> data) {
+    final messageId = data['messageId'] as String;
+    final reactions = data['reactions'] as List<dynamic>;
+    
+    setState(() {
+      final index = _messages.indexWhere((msg) => msg.id == messageId);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(
+          reactions: reactions.map((r) => MessageReaction.fromJson(r)).toList(),
+        );
+      }
+    });
+  }
+
+  void _handleTypingEvent(Map<String, dynamic> data) {
+    final userId = data['userId'] as String;
+    final isTyping = data['isTyping'] as bool;
+    
+    setState(() {
+      _isTyping = isTyping;
+      _typingUserId = isTyping ? userId : null;
+    });
+    
+    // Clear typing indicator after 3 seconds
+    if (isTyping) {
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          setState(() {
+            _isTyping = false;
+            _typingUserId = null;
+          });
+        }
+      });
+    }
+  }
+
+  void _handleSocketError(Map<String, dynamic> event) {
+    final type = event['type'] as String;
+    final message = event['message'] as String;
+    
+    print('Socket error: $type - $message');
+    
+    // Show error to user
+    if (mounted) {
+      CupertinoToast.show(
+        context,
+        'Connection error: $message',
+        type: CupertinoToastType.error,
+      );
+    }
+  }
+
+  Future<void> _loadCurrentUser() async {
+    try {
+      final result = await _apiService.getCurrentUser();
+      if (result.success && result.data != null) {
+        final user = result.data as Map<String, dynamic>;
+        setState(() {
+          _currentUserId = user['id'];
+        });
+        
+        // Mark messages as read after user ID is loaded
+        if (_messages.isNotEmpty) {
+          _markMessagesAsRead();
+        }
+      }
+    } catch (e) {
+      print('Error loading current user: $e');
+    }
+  }
+
+  Future<void> _loadMessages() async {
+    if (widget.conversationId == null) return;
+    
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final result = await _apiService.getMessages(widget.conversationId!);
+      
+      if (result.success && result.data != null) {
+        final messagesList = result.data as List<dynamic>;
+        final messages = messagesList.map((messageData) => Message.fromJson(messageData)).toList();
+        
+        setState(() {
+          _messages = messages;
+          _isLoading = false;
+        });
+        
+        _scrollToBottom();
+        
+        // Mark messages as read after loading
+        if (_currentUserId != null) {
+          _markMessagesAsRead();
+        }
+      } else {
+        setState(() {
+          _error = result.error ?? 'Failed to load messages';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Failed to load messages: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty || _isSendingMessage || widget.conversationId == null) return;
+
+    final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+    final tempMessage = Message(
+      id: tempId,
+      conversationId: widget.conversationId!,
+      sender: MessageSender(
+        id: _currentUserId ?? '',
+        username: 'You',
+        displayName: 'You',
+      ),
+      type: MessageType.text,
+      content: MessageContent(text: text.trim()),
+      status: MessageStatus.sending,
+      createdAt: DateTime.now(),
+      isMe: true,
+    );
+
+    setState(() {
+      _messages.add(tempMessage);
+      _isSendingMessage = true;
+    });
+
+    _messageController.clear();
+    _scrollToBottom();
+
+    try {
+      // Send via Socket.IO for real-time delivery
+      await _socketService.sendMessage(
+        conversationId: widget.conversationId!,
+        type: 'text',
+        content: {'text': text.trim()},
+        clientId: tempId,
+      );
+      
+      // Also send via API as backup
+      final result = await _apiService.sendMessage(widget.conversationId!, text.trim());
+      
+      if (result.success) {
+        setState(() {
+          _isSendingMessage = false;
+        });
+      } else {
+        // Remove temp message on failure
+        setState(() {
+          _messages.removeWhere((msg) => msg.id == tempId);
+          _isSendingMessage = false;
+        });
+        _showError(result.error ?? 'Failed to send message');
+      }
+    } catch (e) {
+      // Remove temp message on error
+      setState(() {
+        _messages.removeWhere((msg) => msg.id == tempId);
+        _isSendingMessage = false;
+      });
+      _showError('Failed to send message: $e');
     }
   }
 
@@ -142,63 +486,92 @@ class _EnhancedChatScreenState extends State<EnhancedChatScreen>
     }
   }
 
-  void _sendMessage() {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+  Timer? _typingTimer;
+  
+  void _handleTypingChange(String text) {
+    if (widget.conversationId == null) return;
     
-    HapticFeedback.lightImpact();
+    // Cancel previous timer
+    _typingTimer?.cancel();
     
-    final message = MockMessage(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      text: text,
-      isMe: true,
-      timestamp: DateTime.now(),
-      status: MessageStatus.sending,
-    );
+    if (text.trim().isNotEmpty) {
+      // Send typing indicator
+      _socketService.setTyping(
+        conversationId: widget.conversationId!,
+        isTyping: true,
+      );
+      
+      // Set timer to stop typing indicator after 2 seconds of inactivity
+      _typingTimer = Timer(const Duration(seconds: 2), () {
+        _socketService.setTyping(
+          conversationId: widget.conversationId!,
+          isTyping: false,
+        );
+      });
+    } else {
+      // Stop typing indicator immediately if text is empty
+      _socketService.setTyping(
+        conversationId: widget.conversationId!,
+        isTyping: false,
+      );
+    }
+  }
+
+  void _markMessagesAsRead() {
+    print('🔍 _markMessagesAsRead called:');
+    print('  - Messages count: ${_messages.length}');
+    print('  - Conversation ID: ${widget.conversationId}');
+    print('  - Current User ID: $_currentUserId');
     
-    setState(() {
-      _messages.add(message);
-      _messageController.clear();
-    });
-    
-    // Simulate message status updates
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted) {
-        setState(() {
-          final index = _messages.indexWhere((m) => m.id == message.id);
-          if (index != -1) {
-            _messages[index] = message.copyWith(status: MessageStatus.sent);
-          }
-        });
+    if (_messages.isNotEmpty && widget.conversationId != null && _currentUserId != null) {
+      // Find the last message that's not from the current user
+      Message? lastUnreadMessage;
+      for (int i = _messages.length - 1; i >= 0; i--) {
+        if (!_messages[i].isMe) {
+          lastUnreadMessage = _messages[i];
+          break;
+        }
       }
-    });
-    
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          final index = _messages.indexWhere((m) => m.id == message.id);
-          if (index != -1) {
-            _messages[index] = message.copyWith(status: MessageStatus.delivered);
-          }
-        });
+      
+      if (lastUnreadMessage != null) {
+        print('👁️ Marking message as read: ${lastUnreadMessage.id}');
+        _socketService.markMessageAsRead(
+          conversationId: widget.conversationId!,
+          messageId: lastUnreadMessage.id,
+        );
+      } else {
+        print('⚠️ No unread messages found to mark as read');
       }
-    });
+    } else {
+      print('⚠️ Cannot mark messages as read - missing requirements');
+    }
+  }
+
+  Future<void> _syncUnreadCount() async {
+    if (widget.conversationId == null) return;
     
-    Future.delayed(const Duration(seconds: 4), () {
-      if (mounted) {
-        setState(() {
-          final index = _messages.indexWhere((m) => m.id == message.id);
-          if (index != -1) {
-            _messages[index] = message.copyWith(status: MessageStatus.read);
-          }
-        });
+    try {
+      print('🔄 Syncing unread count for conversation: ${widget.conversationId}');
+      final result = await _apiService.syncUnreadCount(widget.conversationId!);
+      
+      if (result.success && result.data != null) {
+        final unreadCount = result.data['unreadCount'] as int? ?? 0;
+        print('📊 Current unread count from backend: $unreadCount');
+        
+        // If there are unread messages, mark them as read
+        if (unreadCount > 0) {
+          _markMessagesAsRead();
+        }
       }
-    });
-    
-    // Auto-scroll to bottom
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
-    });
+    } catch (e) {
+      print('❌ Failed to sync unread count: $e');
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) {
+      CupertinoToast.show(context, message, type: CupertinoToastType.error);
+    }
   }
 
   @override
@@ -206,87 +579,28 @@ class _EnhancedChatScreenState extends State<EnhancedChatScreen>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: isDark ? AppColors.darkBackground : AppColors.lightBackground,
       appBar: _buildAppBar(isDark),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              isDark ? AppColors.darkBackground : AppColors.lightBackground,
-              isDark ? AppColors.darkSurface.withOpacity(0.3) : AppColors.lightSurface.withOpacity(0.3),
-            ],
+      body: Column(
+        children: [
+          Expanded(
+            child: _buildMessagesList(isDark),
           ),
-        ),
-        child: Column(
-          children: [
-            // Messages List
-            Expanded(
-              child: Stack(
-                children: [
-                  ListView.builder(
-                    controller: _scrollController,
-                    padding: EdgeInsets.only(
-                      top: kToolbarHeight + MediaQuery.of(context).padding.top + 16,
-                      left: 16,
-                      right: 16,
-                      bottom: 16,
-                    ),
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: _messages.length + (_peerIsTyping ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index == _messages.length && _peerIsTyping) {
-                        return TypingIndicator(
-                          avatarUrl: widget.peerAvatarUrl,
-                        ).animate().fadeIn();
-                      }
-                      
-                      final message = _messages[index];
-                      final previousMessage = index > 0 ? _messages[index - 1] : null;
-                      final showAvatar = !message.isMe && 
-                          (previousMessage == null || 
-                           previousMessage.isMe ||
-                           message.timestamp.difference(previousMessage.timestamp).inMinutes > 5);
-                      
-                      return MessageBubble(
-                        message: message,
-                        showAvatar: showAvatar,
-                        avatarUrl: showAvatar ? widget.peerAvatarUrl : null,
-                          ).animate().slideY(begin: 0.3, end: 0,
-                        delay: Duration(milliseconds: index * 50),
-                      );
-                    },
-                  ),
-                  
-                  // Scroll to bottom button
-                  if (_showScrollToBottom)
-                    Positioned(
-                      right: 16,
-                      bottom: 80,
-                      child: FloatingActionButton.small(
-                        onPressed: _scrollToBottom,
-                        backgroundColor: AppColors.systemBlue,
-                        elevation: 4,
-                        child: const Icon(
-                          LucideIcons.arrowDown,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ).animate().scale().fadeIn(),
-                    ),
-                ],
-              ),
-            ),
-            
-            // Input Bar
+          if (widget.conversationId != null)
             ChatInputBar(
               controller: _messageController,
               focusNode: _messageFocusNode,
-              onSend: _sendMessage,
+              onSend: () {
+                final text = _messageController.text.trim();
+                if (text.isNotEmpty) {
+                  _sendMessage(text);
+                }
+              },
+              onChanged: (text) {
+                _handleTypingChange(text);
+              },
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -296,39 +610,36 @@ class _EnhancedChatScreenState extends State<EnhancedChatScreen>
       backgroundColor: (isDark ? AppColors.darkBackground : AppColors.lightBackground).withOpacity(0.9),
       elevation: 0,
       leading: IconButton(
-        onPressed: () => Navigator.pop(context),
-        icon: const Icon(LucideIcons.chevronLeft, size: 28),
+        onPressed: () => context.pop(),
+        icon: Icon(
+          CupertinoIcons.back,
+          color: AppColors.systemBlue,
+        ),
       ),
       title: Row(
         children: [
-          Stack(
-            children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundImage: CachedNetworkImageProvider(widget.peerAvatarUrl),
-              ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: AppColors.systemGreen,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: isDark ? AppColors.darkBackground : AppColors.lightBackground,
-                      width: 2,
+          CircleAvatar(
+            radius: 20,
+            backgroundImage: widget.peerAvatarUrl.isNotEmpty
+                ? NetworkImage(widget.peerAvatarUrl)
+                : null,
+            backgroundColor: AppColors.systemBlue.withOpacity(0.1),
+            child: widget.peerAvatarUrl.isEmpty
+                ? Text(
+                    widget.peerName.isNotEmpty ? widget.peerName[0].toUpperCase() : '?',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.systemBlue,
                     ),
-                  ),
-                ),
-              ),
-            ],
+                  )
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   widget.peerName,
@@ -341,10 +652,10 @@ class _EnhancedChatScreenState extends State<EnhancedChatScreen>
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  _peerIsTyping ? 'typing...' : 'online',
+                  'Online',
                   style: GoogleFonts.inter(
                     fontSize: 13,
-                    color: _peerIsTyping ? AppColors.systemBlue : AppColors.systemGreen,
+                    color: AppColors.systemGreen,
                   ),
                 ),
               ],
@@ -352,785 +663,148 @@ class _EnhancedChatScreenState extends State<EnhancedChatScreen>
           ),
         ],
       ),
-      actions: [
-        IconButton(
-          onPressed: _makeVideoCall,
-          icon: const Icon(CupertinoIcons.video_camera, color: AppColors.systemBlue, size: 26),
+    );
+  }
+
+  Widget _buildMessagesList(bool isDark) {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              CupertinoIcons.exclamationmark_triangle,
+              size: 48,
+              color: AppColors.systemRed,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _error!,
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                color: isDark ? AppColors.darkSecondaryText : AppColors.lightSecondaryText,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadMessages,
+              child: const Text('Retry'),
+            ),
+          ],
         ),
-        IconButton(
-          onPressed: _makeAudioCall,
-          icon: const Icon(CupertinoIcons.phone, color: AppColors.systemBlue, size: 26),
+      );
+    }
+
+    if (_messages.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              CupertinoIcons.chat_bubble_2,
+              size: 64,
+              color: AppColors.systemGray,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              widget.conversationId != null 
+                  ? 'No messages yet\nSend the first message!'
+                  : 'Direct messaging coming soon!',
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                color: AppColors.systemGray,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
-        IconButton(
-          onPressed: _showOptionsModal,
-          icon: const Icon(CupertinoIcons.ellipsis_circle, color: AppColors.systemBlue, size: 26),
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            controller: _scrollController,
+            padding: const EdgeInsets.all(16),
+            itemCount: _messages.length,
+            itemBuilder: (context, index) {
+              final message = _messages[index];
+              
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: MessageBubble(
+                  message: message,
+                  showAvatar: !message.isMe,
+                  avatarUrl: !message.isMe ? widget.peerAvatarUrl : null,
+                ),
+              );
+            },
+          ),
         ),
+        if (_isTyping && _typingUserId != null)
+          _buildTypingIndicator(isDark),
       ],
-      flexibleSpace: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  (isDark ? AppColors.darkBackground : AppColors.lightBackground).withOpacity(0.9),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 
-  void _showAttachmentOptions() {
-    HapticFeedback.lightImpact();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _AttachmentOptionsSheet(),
-    );
-  }
-
-  void _openCamera() {
-    HapticFeedback.lightImpact();
-    // TODO: Implement camera functionality
-  }
-
-  void _recordVoice() {
-    HapticFeedback.lightImpact();
-    // TODO: Implement voice recording
-  }
-
-  void _makeVideoCall() {
-    HapticFeedback.lightImpact();
-    // TODO: Implement video call
-  }
-
-  void _makeAudioCall() {
-    HapticFeedback.lightImpact();
-    // TODO: Implement audio call
-  }
-
-  void _showOptionsModal() {
-    HapticFeedback.lightImpact();
-    showCupertinoModalPopup(
-      context: context,
-      builder: (context) => CupertinoActionSheet(
-        actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
-              _showContactInfo();
-            },
-            child: Row(
-              children: [
-                Icon(
-                  CupertinoIcons.person_circle,
-                  color: AppColors.systemBlue,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Contact Info',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    color: AppColors.systemBlue,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
-              _muteConversation();
-            },
-            child: Row(
-              children: [
-                Icon(
-                  _isMuted ? CupertinoIcons.bell : CupertinoIcons.bell_slash,
-                  color: AppColors.systemBlue,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  _isMuted ? 'Unmute Notifications' : 'Mute Notifications',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    color: AppColors.systemBlue,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
-              _searchInConversation();
-            },
-            child: Row(
-              children: [
-                Icon(
-                  CupertinoIcons.search,
-                  color: AppColors.systemBlue,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Search in Conversation',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    color: AppColors.systemBlue,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(context);
-              _blockUser();
-            },
-            child: Row(
-              children: [
-                Icon(
-                  CupertinoIcons.xmark_circle,
-                  color: AppColors.systemRed,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Block Contact',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    color: AppColors.systemRed,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(context),
-          child: Text(
-            'Cancel',
-            style: GoogleFonts.inter(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: AppColors.systemBlue,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showContactInfo() {
-    HapticFeedback.lightImpact();
-    final location = Uri(
-      path: AppRouter.contactInfo,
-      queryParameters: {
-        'name': widget.peerName,
-        'avatar': widget.peerAvatarUrl,
-        'muted': _isMuted.toString(),
-        'blocked': _isBlocked.toString(),
-      },
-    ).toString();
-    context.push(location);
-  }
-
-  void _muteConversation() {
-    HapticFeedback.lightImpact();
-    setState(() => _isMuted = !_isMuted);
-    
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: Text(
-          _isMuted ? 'Notifications Muted' : 'Notifications Enabled',
-          style: GoogleFonts.inter(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        content: Text(
-          _isMuted 
-              ? 'You will no longer receive notifications for messages from ${widget.peerName}.'
-              : 'You will now receive notifications for messages from ${widget.peerName}.',
-          style: GoogleFonts.inter(fontSize: 13),
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'OK',
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                color: AppColors.systemBlue,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _searchInConversation() {
-    HapticFeedback.lightImpact();
-    _showSearchModal();
-  }
-
-  void _showSearchModal() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => _SearchInConversationSheet(contactName: widget.peerName),
-    );
-  }
-
-  void _blockUser() {
-    HapticFeedback.lightImpact();
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: Text(
-          'Block ${widget.peerName}?',
-          style: GoogleFonts.inter(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        content: Text(
-          'You will no longer receive messages from this contact.',
-          style: GoogleFonts.inter(fontSize: 13),
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                color: AppColors.systemBlue,
-              ),
-            ),
-          ),
-          CupertinoDialogAction(
-            isDestructiveAction: true,
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() => _isBlocked = true);
-              _showBlockedConfirmation();
-            },
-            child: Text(
-              'Block',
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showBlockedConfirmation() {
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: Text(
-          'Contact Blocked',
-          style: GoogleFonts.inter(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        content: Text(
-          '${widget.peerName} has been blocked. You will no longer receive messages from this contact.',
-          style: GoogleFonts.inter(fontSize: 13),
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'OK',
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                color: AppColors.systemBlue,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AttachmentOptionsSheet extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+  Widget _buildTypingIndicator(bool isDark) {
     return Container(
-      height: 200,
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkSurface : AppColors.lightBackground,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
         children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundImage: widget.peerAvatarUrl.isNotEmpty && widget.peerAvatarUrl.startsWith('http')
+                ? CachedNetworkImageProvider(widget.peerAvatarUrl)
+                : null,
+            child: widget.peerAvatarUrl.isEmpty || !widget.peerAvatarUrl.startsWith('http')
+                ? Text(
+                    widget.peerName.isNotEmpty ? widget.peerName[0].toUpperCase() : '?',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
           Container(
-            width: 36,
-            height: 5,
-            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: AppColors.systemGray4,
-              borderRadius: BorderRadius.circular(2.5),
+              color: isDark ? AppColors.darkSecondaryBackground : AppColors.lightSecondaryBackground,
+              borderRadius: BorderRadius.circular(18),
             ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _AttachmentOption(
-                icon: LucideIcons.camera,
-                label: 'Camera',
-                color: AppColors.systemBlue,
-                onTap: () => Navigator.pop(context),
-              ),
-              _AttachmentOption(
-                icon: LucideIcons.image,
-                label: 'Gallery',
-                color: AppColors.systemGreen,
-                onTap: () => Navigator.pop(context),
-              ),
-              _AttachmentOption(
-                icon: LucideIcons.fileText,
-                label: 'Document',
-                color: AppColors.systemOrange,
-                onTap: () => Navigator.pop(context),
-              ),
-              _AttachmentOption(
-                icon: LucideIcons.mapPin,
-                label: 'Location',
-                color: AppColors.systemRed,
-                onTap: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AttachmentOption extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _AttachmentOption({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Mock Message Model
-class MockMessage {
-  final String id;
-  final String text;
-  final bool isMe;
-  final DateTime timestamp;
-  final MessageStatus status;
-
-  MockMessage({
-    required this.id,
-    required this.text,
-    required this.isMe,
-    required this.timestamp,
-    required this.status,
-  });
-
-  MockMessage copyWith({
-    String? id,
-    String? text,
-    bool? isMe,
-    DateTime? timestamp,
-    MessageStatus? status,
-  }) {
-    return MockMessage(
-      id: id ?? this.id,
-      text: text ?? this.text,
-      isMe: isMe ?? this.isMe,
-      timestamp: timestamp ?? this.timestamp,
-      status: status ?? this.status,
-    );
-  }
-}
-
-enum MessageStatus {
-  sending,
-  sent,
-  delivered,
-  read,
-  failed,
-}
-
-class _SearchInConversationSheet extends StatefulWidget {
-  final String contactName;
-  
-  const _SearchInConversationSheet({required this.contactName});
-
-  @override
-  State<_SearchInConversationSheet> createState() => _SearchInConversationSheetState();
-}
-
-class _SearchInConversationSheetState extends State<_SearchInConversationSheet> {
-  final TextEditingController _searchController = TextEditingController();
-  final FocusNode _searchFocusNode = FocusNode();
-  List<String> _searchResults = [];
-  bool _isSearching = false;
-
-  final List<String> _mockMessages = [
-    'Hey! How are you doing today?',
-    'I\'m doing great! Just finished a really interesting project at work.',
-    'That sounds amazing! What kind of project was it?',
-    'It was a mobile app for a local business. Really enjoyed working on the UI design.',
-    'Would love to see it sometime! Are you free for coffee this weekend?',
-    'Absolutely! Saturday afternoon works perfectly for me.',
-    'Great! How about that new place downtown?',
-    'Perfect! See you there at 2 PM?',
-    'Sounds like a plan! Looking forward to it.',
-    'Me too! Have a great rest of your week!',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController.addListener(_onSearchChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _searchFocusNode.requestFocus();
-    });
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _searchFocusNode.dispose();
-    super.dispose();
-  }
-
-  void _onSearchChanged() {
-    final query = _searchController.text.trim().toLowerCase();
-    setState(() {
-      _isSearching = query.isNotEmpty;
-      if (query.isEmpty) {
-        _searchResults = [];
-      } else {
-        _searchResults = _mockMessages
-            .where((message) => message.toLowerCase().contains(query))
-            .toList();
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75 + keyboardHeight,
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkBackground : AppColors.lightBackground,
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
-        ),
-      ),
-      child: Column(
-        children: [
-          // Handle
-          Container(
-            margin: const EdgeInsets.only(top: 8),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[600] : Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(20),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Search in Conversation',
+                  '${widget.peerName} is typing',
                   style: GoogleFonts.inter(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
+                    fontSize: 14,
+                    color: isDark ? AppColors.darkSecondaryText : AppColors.lightSecondaryText,
                   ),
                 ),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: Icon(
-                    CupertinoIcons.xmark,
-                    color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isDark ? AppColors.darkSecondaryText : AppColors.lightSecondaryText,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Container(
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkSecondaryBackground : AppColors.lightSecondaryBackground,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _searchFocusNode.hasFocus
-                      ? AppColors.systemBlue
-                      : (isDark ? AppColors.darkBorder : AppColors.lightBorder),
-                  width: _searchFocusNode.hasFocus ? 2 : 0.5,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: Icon(
-                      CupertinoIcons.search,
-                      color: AppColors.systemGray,
-                      size: 20,
-                    ),
-                  ),
-                  Expanded(
-                    child: CupertinoTextField(
-                      controller: _searchController,
-                      focusNode: _searchFocusNode,
-                      placeholder: 'Search messages with ${widget.contactName}',
-                      placeholderStyle: GoogleFonts.inter(
-                        color: AppColors.systemGray,
-                        fontSize: 17,
-                      ),
-                      style: GoogleFonts.inter(
-                        fontSize: 17,
-                        color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
-                      ),
-                      decoration: null,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    ),
-                  ),
-                  if (_searchController.text.isNotEmpty)
-                    IconButton(
-                      onPressed: () {
-                        _searchController.clear();
-                        _searchFocusNode.requestFocus();
-                      },
-                      icon: Icon(
-                        CupertinoIcons.xmark_circle_fill,
-                        color: AppColors.systemGray,
-                        size: 20,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-          
-          // Search Results
-          Expanded(
-            child: _isSearching
-                ? _searchResults.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              CupertinoIcons.search,
-                              size: 64,
-                              color: AppColors.systemGray,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No messages found',
-                              style: GoogleFonts.inter(
-                                fontSize: 17,
-                                color: AppColors.systemGray,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Try a different search term',
-                              style: GoogleFonts.inter(
-                                fontSize: 15,
-                                color: AppColors.systemGray,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        itemCount: _searchResults.length,
-                        itemBuilder: (context, index) {
-                          final message = _searchResults[index];
-                          final query = _searchController.text.trim().toLowerCase();
-                          
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: isDark ? AppColors.darkSecondaryBackground : AppColors.lightSecondaryBackground,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                RichText(
-                                  text: TextSpan(
-                                    style: GoogleFonts.inter(
-                                      fontSize: 16,
-                                      color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
-                                    ),
-                                    children: _highlightSearchTerm(message, query, isDark),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '${DateTime.now().subtract(Duration(hours: index + 1)).hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    color: AppColors.systemGray,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      )
-                : Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          CupertinoIcons.chat_bubble_2,
-                          size: 64,
-                          color: AppColors.systemGray,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Search Messages',
-                          style: GoogleFonts.inter(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Find messages in your conversation\nwith ${widget.contactName}',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.inter(
-                            fontSize: 15,
-                            color: AppColors.systemGray,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-          ),
         ],
       ),
     );
-  }
-
-  List<TextSpan> _highlightSearchTerm(String text, String query, bool isDark) {
-    if (query.isEmpty) {
-      return [TextSpan(text: text)];
-    }
-
-    final List<TextSpan> spans = [];
-    final lowerText = text.toLowerCase();
-    int start = 0;
-
-    while (true) {
-      final index = lowerText.indexOf(query, start);
-      if (index == -1) {
-        if (start < text.length) {
-          spans.add(TextSpan(text: text.substring(start)));
-        }
-        break;
-      }
-
-      if (index > start) {
-        spans.add(TextSpan(text: text.substring(start, index)));
-      }
-
-      spans.add(TextSpan(
-        text: text.substring(index, index + query.length),
-        style: GoogleFonts.inter(
-          backgroundColor: AppColors.systemBlue.withOpacity(0.3),
-          fontWeight: FontWeight.w600,
-        ),
-      ));
-
-      start = index + query.length;
-    }
-
-    return spans;
   }
 }

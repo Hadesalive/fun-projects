@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/services/api_service.dart';
 
 class CreateGroupScreen extends StatefulWidget {
   const CreateGroupScreen({super.key});
@@ -14,38 +15,17 @@ class CreateGroupScreen extends StatefulWidget {
 }
 
 class _CreateGroupScreenState extends State<CreateGroupScreen> {
+  final ApiService _apiService = ApiService();
   final TextEditingController _groupNameController = TextEditingController();
   final TextEditingController _groupDescriptionController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   
-  List<String> _selectedMembers = [];
-  List<String> _filteredContacts = [];
+  List<Map<String, dynamic>> _selectedMembers = [];
+  List<Map<String, dynamic>> _filteredContacts = [];
+  List<Map<String, dynamic>> _allContacts = [];
   
-  final List<String> _allContacts = [
-    'Emma Wilson',
-    'Alex Chen', 
-    'Sarah Johnson',
-    'Mike Davis',
-    'Lisa Brown',
-    'Tom Wilson',
-    'Jessica Lee',
-    'David Park',
-    'Anna Smith',
-    'Ryan Garcia'
-  ];
-  
-  final List<String> _allUsernames = [
-    'emma_w',
-    'alex_c',
-    'sarah_j', 
-    'mike_d',
-    'lisa_b',
-    'tom_w',
-    'jessica_l',
-    'david_p',
-    'anna_s',
-    'ryan_g'
-  ];
+  bool _isLoadingUsers = false;
+  bool _isCreatingGroup = false;
 
   @override
   void initState() {
@@ -61,34 +41,65 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     super.dispose();
   }
 
-  void _filterContacts(String query) {
-    setState(() {
-      if (query.isEmpty) {
-        _filteredContacts = _allContacts;
-      } else {
+  Future<void> _filterContacts(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
         _filteredContacts = [];
-        for (int i = 0; i < _allContacts.length; i++) {
-          if (_allContacts[i].toLowerCase().contains(query.toLowerCase()) ||
-              _allUsernames[i].toLowerCase().contains(query.toLowerCase())) {
-            _filteredContacts.add(_allContacts[i]);
-          }
+        _isLoadingUsers = false;
+      });
+      return;
+    }
+
+    if (query.trim().length < 2) {
+      return; // Wait for at least 2 characters
+    }
+
+    setState(() => _isLoadingUsers = true);
+
+    try {
+      final result = await _apiService.searchUsers(query.trim());
+      
+      if (result.success) {
+        setState(() {
+          _allContacts = List<Map<String, dynamic>>.from(result.data ?? []);
+          _filteredContacts = _allContacts;
+          _isLoadingUsers = false;
+        });
+      } else {
+        setState(() {
+          _filteredContacts = [];
+          _isLoadingUsers = false;
+        });
+        if (mounted) {
+          _showError('Failed to search users: ${result.error}');
         }
       }
-    });
+    } catch (e) {
+      setState(() {
+        _filteredContacts = [];
+        _isLoadingUsers = false;
+      });
+      if (mounted) {
+        _showError('Error searching users: $e');
+      }
+    }
   }
 
-  void _toggleMember(String contact) {
+  void _toggleMember(Map<String, dynamic> user) {
     setState(() {
-      if (_selectedMembers.contains(contact)) {
-        _selectedMembers.remove(contact);
+      final userId = user['id'];
+      final existingIndex = _selectedMembers.indexWhere((member) => member['id'] == userId);
+      
+      if (existingIndex != -1) {
+        _selectedMembers.removeAt(existingIndex);
       } else {
-        _selectedMembers.add(contact);
+        _selectedMembers.add(user);
       }
     });
     HapticFeedback.lightImpact();
   }
 
-  void _createGroup() {
+  Future<void> _createGroup() async {
     if (_groupNameController.text.trim().isEmpty) {
       _showError('Please enter a group name');
       return;
@@ -99,43 +110,73 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       return;
     }
 
+    if (_isCreatingGroup) return;
+
+    setState(() => _isCreatingGroup = true);
     HapticFeedback.lightImpact();
-    
-    // Show success alert and navigate back
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: Text(
-          'Group Created',
-          style: GoogleFonts.inter(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        content: Text(
-          'Your group "${_groupNameController.text}" has been created successfully.',
-          style: GoogleFonts.inter(
-            fontSize: 13,
-          ),
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () {
-              Navigator.of(context).pop(); // Close dialog
-              context.pop(); // Navigate back
-            },
-            child: Text(
-              'OK',
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: AppColors.systemBlue,
+
+    try {
+      final memberIds = _selectedMembers.map((member) => member['id'] as String).toList();
+      
+      final result = await _apiService.createGroup(
+        name: _groupNameController.text.trim(),
+        description: _groupDescriptionController.text.trim().isEmpty 
+            ? null 
+            : _groupDescriptionController.text.trim(),
+        memberIds: memberIds,
+      );
+
+      if (result.success) {
+        setState(() => _isCreatingGroup = false);
+        
+        if (mounted) {
+          showCupertinoDialog(
+            context: context,
+            builder: (context) => CupertinoAlertDialog(
+              title: Text(
+                'Group Created',
+                style: GoogleFonts.inter(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              content: Text(
+                'Your group "${_groupNameController.text}" has been created successfully.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                ),
+              ),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: () {
+                    Navigator.of(context).pop(); // Close dialog
+                    context.pop(); // Navigate back
+                  },
+                  child: Text(
+                    'OK',
+                    style: GoogleFonts.inter(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.systemBlue,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
-    );
+          );
+        }
+      } else {
+        setState(() => _isCreatingGroup = false);
+        if (mounted) {
+          _showError('Failed to create group: ${result.error}');
+        }
+      }
+    } catch (e) {
+      setState(() => _isCreatingGroup = false);
+      if (mounted) {
+        _showError('Error creating group: $e');
+      }
+    }
   }
 
   void _showError(String message) {
@@ -201,15 +242,24 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         centerTitle: true,
         actions: [
           TextButton(
-            onPressed: _createGroup,
-            child: Text(
-              'Create',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.systemBlue,
-              ),
-            ),
+            onPressed: _isCreatingGroup ? null : _createGroup,
+            child: _isCreatingGroup
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.systemBlue),
+                    ),
+                  )
+                : Text(
+                    'Create',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.systemBlue,
+                    ),
+                  ),
           ),
         ],
       ),
@@ -405,69 +455,133 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
           const SizedBox(height: 20),
           
           // Contacts List
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.darkSecondaryBackground : AppColors.lightSecondaryBackground,
-              borderRadius: BorderRadius.circular(12),
+          if (_isLoadingUsers)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.systemBlue),
+                ),
+              ),
+            )
+          else if (_filteredContacts.isEmpty && _searchController.text.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: Text(
+                  'No users found',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    color: AppColors.systemGray,
+                  ),
+                ),
+              ),
+            )
+          else if (_filteredContacts.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: isDark ? AppColors.darkSecondaryBackground : AppColors.lightSecondaryBackground,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: _filteredContacts.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final user = entry.value;
+                  final userId = user['id'];
+                  final displayName = user['displayName'] ?? user['username'] ?? 'Unknown User';
+                  final username = user['username'] ?? '';
+                  final avatarUrl = user['avatarUrl'] as String?;
+                  final isSelected = _selectedMembers.any((member) => member['id'] == userId);
+                  final isLast = index == _filteredContacts.length - 1;
+                  
+                  return Column(
+                    children: [
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        leading: CircleAvatar(
+                          radius: 20,
+                          backgroundColor: AppColors.systemBlue.withOpacity(0.1),
+                          child: avatarUrl != null && avatarUrl.isNotEmpty
+                              ? ClipOval(
+                                  child: CachedNetworkImage(
+                                    imageUrl: avatarUrl,
+                                    fit: BoxFit.cover,
+                                    width: 40,
+                                    height: 40,
+                                    errorWidget: (context, url, error) => Text(
+                                      displayName[0].toUpperCase(),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.systemBlue,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : Text(
+                                  displayName[0].toUpperCase(),
+                                  style: GoogleFonts.inter(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.systemBlue,
+                                  ),
+                                ),
+                        ),
+                        title: Text(
+                          displayName,
+                          style: GoogleFonts.inter(
+                            fontSize: 17,
+                            color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
+                          ),
+                        ),
+                        subtitle: username.isNotEmpty ? Text(
+                          '@$username',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            color: AppColors.systemGray,
+                          ),
+                        ) : null,
+                        trailing: isSelected
+                            ? Icon(
+                                CupertinoIcons.checkmark_circle_fill,
+                                color: AppColors.systemBlue,
+                                size: 22,
+                              )
+                            : Icon(
+                                CupertinoIcons.circle,
+                                color: AppColors.systemGray,
+                                size: 22,
+                              ),
+                        onTap: () => _toggleMember(user),
+                      ),
+                      if (!isLast)
+                        Container(
+                          height: 0.5,
+                          color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                          margin: const EdgeInsets.only(left: 72),
+                        ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            )
+          else
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: Text(
+                  'Search for users to add to your group',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    color: AppColors.systemGray,
+                  ),
+                ),
+              ),
             ),
-            child: Column(
-              children: _filteredContacts.asMap().entries.map((entry) {
-                final index = entry.key;
-                final contact = entry.value;
-                final contactIndex = _allContacts.indexOf(contact);
-                final username = _allUsernames[contactIndex];
-                final isSelected = _selectedMembers.contains(contact);
-                final isLast = index == _filteredContacts.length - 1;
-                
-                return Column(
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      leading: CircleAvatar(
-                        radius: 20,
-                        backgroundImage: CachedNetworkImageProvider(
-                          'https://i.pravatar.cc/200?img=${contactIndex + 1}',
-                        ),
-                      ),
-                      title: Text(
-                        contact,
-                        style: GoogleFonts.inter(
-                          fontSize: 17,
-                          color: isDark ? AppColors.darkPrimaryText : AppColors.lightPrimaryText,
-                        ),
-                      ),
-                      subtitle: Text(
-                        '@$username',
-                        style: GoogleFonts.inter(
-                          fontSize: 15,
-                          color: AppColors.systemGray,
-                        ),
-                      ),
-                      trailing: isSelected
-                          ? Icon(
-                              CupertinoIcons.checkmark_circle_fill,
-                              color: AppColors.systemBlue,
-                              size: 22,
-                            )
-                          : Icon(
-                              CupertinoIcons.circle,
-                              color: AppColors.systemGray,
-                              size: 22,
-                            ),
-                      onTap: () => _toggleMember(contact),
-                    ),
-                    if (!isLast)
-                      Container(
-                        height: 0.5,
-                        color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                        margin: const EdgeInsets.only(left: 72),
-                      ),
-                  ],
-                );
-              }).toList(),
-            ),
-          ),
           
           // Selected Members Count
           if (_selectedMembers.isNotEmpty) ...[
